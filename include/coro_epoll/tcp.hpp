@@ -113,6 +113,9 @@ public:
             if (count > 0) {
                 co_return static_cast<std::size_t>(count);
             }
+            if (count == 0) {
+                co_return 0;
+            }
             if (errno == EINTR) {
                 continue;
             }
