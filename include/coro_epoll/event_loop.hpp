@@ -448,8 +448,8 @@ private:
         if (write_handle) {
             write_handle.resume();
         }
-#endif
     }
+#endif
 
     void update_or_remove(int fd, const FdState& state) {
 #if defined(__linux__)
