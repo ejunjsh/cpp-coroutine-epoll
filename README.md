@@ -1,5 +1,7 @@
 # C++20 Coroutine Event Loop
 
+![CMake Build](https://github.com/ejunjsh/cpp-coroutine-epoll/actions/workflows/cmake-multi-platform.yml/badge.svg)
+
 Small Linux/macOS networking example that wraps readiness events with C++20 coroutines. Linux uses 'epoll' plus 'eventfd'; macOS uses 'kqueue' plus 'pipe'. The server uses one acceptor `EventLoop` in the main thread, one `EventLoop` per network worker thread for connected clients, and a separate business `ThreadPool` for CPU-heavy or blocking work.
 
 ## Structure
