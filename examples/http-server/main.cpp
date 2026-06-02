@@ -7,7 +7,9 @@
 #include <charconv>
 #include <cstdint>
 #include <exception>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -143,36 +145,35 @@ Task<HttpRequest> parse_request(TcpSocket& socket) {
 }
 
 // ---------------------------------------------------------------------------
+// Static file contents loaded at startup
+// ---------------------------------------------------------------------------
+namespace {
+
+std::string g_index_html;
+std::string g_status_json;
+
+std::string read_file(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("cannot open: " + path);
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+void load_static_files() {
+    g_index_html = read_file("../examples/http-server/static/index.html");
+    g_status_json = read_file("../examples/http-server/static/status.json");
+}
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
 // Route handler: build response for a given request
 // ---------------------------------------------------------------------------
 HttpResponse handle_route(const HttpRequest& request) {
     HttpResponse response;
-
-    static const std::string home_html = R"(<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>cpp-coroutine-epoll HTTP Server</title>
-    <style>
-        body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; }
-        h1 { color: #333; }
-        p { color: #666; line-height: 1.6; }
-        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
-        ul { color: #666; }
-        a { color: #0366d6; }
-    </style>
-</head>
-<body>
-    <h1>cpp-coroutine-epoll HTTP Server</h1>
-    <p>A C++20 coroutine HTTP server running on <code>epoll</code>/<code>kqueue</code>.</p>
-    <p>Try these paths:</p>
-    <ul>
-        <li><a href="/hello">/hello</a> — plain text greeting</li>
-        <li><a href="/json">/json</a> — JSON response</li>
-    </ul>
-    <p><em>Powered by C++20 coroutines</em></p>
-</body>
-</html>)";
 
     if (request.method != "GET") {
         response.status = 405;
@@ -186,7 +187,7 @@ HttpResponse handle_route(const HttpRequest& request) {
         response.status = 200;
         response.status_text = "OK";
         response.content_type = "text/html; charset=utf-8";
-        response.body = home_html;
+        response.body = g_index_html;
     } else if (request.path == "/hello") {
         response.status = 200;
         response.status_text = "OK";
@@ -196,8 +197,7 @@ HttpResponse handle_route(const HttpRequest& request) {
         response.status = 200;
         response.status_text = "OK";
         response.content_type = "application/json";
-        response.body = R"({"status":"ok","server":"cpp-coroutine-epoll"})";
-        response.body += '\n';
+        response.body = g_status_json;
     } else {
         response.status = 404;
         response.status_text = "Not Found";
@@ -288,6 +288,8 @@ std::size_t parse_worker_count(int argc, char** argv) {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     try {
+        load_static_files();
+
         const std::uint16_t port = parse_port(argc, argv);
         const std::size_t worker_count = parse_worker_count(argc, argv);
 
