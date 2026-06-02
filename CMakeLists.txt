@@ -13,7 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
 
 add_executable(echo_server
-    src/main.cpp
+    examples/echo-server/main.cpp
 )
 
 target_include_directories(echo_server PRIVATE
@@ -23,6 +23,22 @@ target_include_directories(echo_server PRIVATE
 target_link_libraries(echo_server PRIVATE Threads::Threads)
 
 target_compile_options(echo_server PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+add_executable(proxy_server
+    examples/proxy-server/main.cpp
+)
+
+target_include_directories(proxy_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(proxy_server PRIVATE Threads::Threads)
+
+target_compile_options(proxy_server PRIVATE
     -Wall
     -Wextra
     -Wpedantic
