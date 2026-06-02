@@ -43,3 +43,19 @@ target_compile_options(proxy_server PRIVATE
     -Wextra
     -Wpedantic
 )
+
+add_executable(http_server
+    examples/http-server/main.cpp
+)
+
+target_include_directories(http_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(http_server PRIVATE Threads::Threads)
+
+target_compile_options(http_server PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
