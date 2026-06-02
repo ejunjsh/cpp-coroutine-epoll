@@ -13,6 +13,8 @@ Small Linux/macOS networking example that wraps readiness events with C++20 coro
 - `coro_epoll::TcpServer`: non-blocking listening socket.
 - `coro_epoll::TcpSocket`: wraps fd, registers interest with EventLoop and resumes coroutines on the original `EventLoop`.
 - `echo_server`: sample echo server, connected TCP socket.
+- `proxy_server`: TCP proxy that forwards client connections to a backend.
+- `http_server`: minimal HTTP/1.1 server with keep-alive, routes, and static files.
 
 ## Threading model
 
@@ -55,23 +57,55 @@ cmake -S . -B build
 cmake --build build
 ```
 
-## Run
+## Examples
+
+### echo_server
+
+```bash
+./build/echo_server [port=8888] [worker_count] [business_worker_count]
+```
 
 ```bash
 ./build/echo_server 8888
 nc 127.0.0.1 8888
 ```
 
-The optional second argument sets the network worker count:
-
-```bash
-./build/echo_server 8888 4
-```
-
-The optional third argument sets the business worker count:
-
-```bash
-./build/echo_server 8888 4 8
-```
-
 Every line typed in `nc` is echoed back by a coroutine-managed client handler.
+
+### proxy_server
+
+TCP proxy that forwards connections to a backend:
+
+```bash
+./build/proxy_server <listen_port> <backend_host> <backend_port> [worker_count]
+```
+
+```bash
+# Proxy localhost:8888 → 127.0.0.1:3306 (MySQL)
+./build/proxy_server 8888 127.0.0.1 3306
+```
+
+Uses `spawn` + `co_await` for concurrent bidirectional relay between client and backend.
+
+### http_server
+
+Minimal HTTP/1.1 server with keep-alive support:
+
+```bash
+./build/http_server [port=8080] [worker_count]
+```
+
+```bash
+./build/http_server 8080
+```
+
+Open `http://localhost:8080` in a browser. Routes:
+
+| Path | Content |
+|------|---------|
+| `/` | HTML home page |
+| `/hello` | Plain text greeting |
+| `/json` | JSON status |
+| Others | 404 Not Found |
+
+Response content is loaded from `examples/http-server/static/` at startup — edit the HTML or JSON files without recompiling.
