@@ -12,50 +12,29 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 
-add_executable(echo_server
-    examples/echo-server/main.cpp
+set(EXAMPLES
+    echo_server:examples/echo-server/main.cpp
+    proxy_server:examples/proxy-server/main.cpp
+    http_server:examples/http-server/main.cpp
+    udp_echo_server:examples/udp-echo-server/main.cpp
 )
 
-target_include_directories(echo_server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+foreach(example IN LISTS EXAMPLES)
+    string(REPLACE ":" ";" example_parts ${example})
+    list(GET example_parts 0 example_name)
+    list(GET example_parts 1 example_source)
 
-target_link_libraries(echo_server PRIVATE Threads::Threads)
+    add_executable(${example_name} ${example_source})
 
-target_compile_options(echo_server PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-)
+    target_include_directories(${example_name} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
 
-add_executable(proxy_server
-    examples/proxy-server/main.cpp
-)
+    target_link_libraries(${example_name} PRIVATE Threads::Threads)
 
-target_include_directories(proxy_server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(proxy_server PRIVATE Threads::Threads)
-
-target_compile_options(proxy_server PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-
-add_executable(http_server
-    examples/http-server/main.cpp
-)
-
-target_include_directories(http_server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(http_server PRIVATE Threads::Threads)
-
-target_compile_options(http_server PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-)
+    target_compile_options(${example_name} PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+endforeach()
