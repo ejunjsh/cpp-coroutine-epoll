@@ -2,49 +2,108 @@
 
 ![CMake Build](https://github.com/ejunjsh/cpp-coroutine-epoll/actions/workflows/cmake-multi-platform.yml/badge.svg)
 
-Small Linux/macOS networking example that wraps readiness events with C++20 coroutines. Linux uses 'epoll' plus 'eventfd'; macOS uses 'kqueue' plus 'pipe'. Each worker thread owns an `EventLoop` with a listening socket (bound with `SO_REUSEPORT`), and a separate business `ThreadPool` handles CPU-heavy or blocking work.
+A C++20 coroutine-based networking library that wraps readiness events with `co_await`. Linux uses `epoll` + `eventfd`; macOS uses `kqueue` + `pipe`. All I/O is non-blocking, and coroutines are suspended/resumed by the event loop without any callback nesting.
 
-## Structure
+## Library
 
-- `coro_epoll::Task<T>`: coroutine return type.
-- `coro_epoll::EventLoop`: single-threaded reactor with Linux 'epoll'/'eventfd' or macOS 'kqueue'/'pipe' wakeup and cross-thread 'post()'.
-- `coro_epoll::WorkerGroup`: owns one worker `EventLoop` per network worker thread.
-- `coro_epoll::ThreadPool`: runs heavy work away from the network loops.
-- `coro_epoll::TcpServer`: non-blocking listening socket, supports `SO_REUSEPORT`.
-- `coro_epoll::TcpSocket`: wraps fd, registers interest with EventLoop and resumes coroutines on the original `EventLoop`.
-- `coro_epoll::UdpSocket`: non-blocking UDP socket with `SO_REUSEPORT` support.
-- `coro_epoll::UdpEndpoint`: IPv4 address + port wrapper for UDP send/recv.
+### `coro_epoll::Task<T>`
+
+The coroutine return type. A `Task<T>` bridges the synchronous world (event loop) with `co_await`-based async code.
+
+- `Task<T>` for coroutines that produce a value; `Task<void>` for fire-and-forget or side-effect-only coroutines.
+- Move-only: each `Task` uniquely owns a coroutine handle. Destroying a `Task` destroys the coroutine.
+- `co_await task` suspends the caller and resumes when the inner coroutine completes, propagating the result (or exception).
+- `promise_type::initial_suspend()` returns `suspend_always` — newly created tasks are lazily started via `EventLoop::spawn()`.
+
+### `coro_epoll::EventLoop`
+
+Single-threaded reactor. Owns one `epoll` (Linux) or `kqueue` (macOS) fd.
+
+| Method | Description |
+|--------|-------------|
+| `spawn(Task<void>&&)` | Start a coroutine on this loop. |
+| `post(std::function<void()>)` | Enqueue a callback from another thread. Thread-safe. |
+| `run()` | Blocking event loop. Returns when `stop()` is called. |
+| `stop()` | Signal the loop to exit. Thread-safe. |
+| `readable(int fd)` | Returns an awaiter that suspends until `fd` is readable. |
+| `writable(int fd)` | Returns an awaiter that suspends until `fd` is writable. |
+| `remove(int fd)` | Deregister `fd` and clean up associated coroutine handles. |
+
+`post()` enables cross-thread scheduling: a business thread can post a continuation back to the owning `EventLoop`, keeping socket I/O on the correct thread.
+
+### `coro_epoll::WorkerGroup`
+
+Owns N `EventLoop` instances, each running on its own thread. Provides round-robin access via `next()`.
+
+| Method | Description |
+|--------|-------------|
+| `next()` | Returns the next `EventLoop&` in round-robin order. Thread-safe. |
+| `stop()` / `join()` | Gracefully shut down all worker loops. |
+
+Combined with `SO_REUSEPORT`, each worker can bind its own listening socket and the kernel distributes incoming connections.
+
+### `coro_epoll::ThreadPool`
+
+Runs CPU-heavy or blocking tasks off the network threads. When a task completes, the coroutine continuation is posted back to the originating `EventLoop`.
+
+```cpp
+std::string result = co_await pool.submit(loop, [] {
+    return expensive_computation();
+});
+// Resumed on 'loop' — safe to read/write sockets here.
+```
+
+### `coro_epoll::TcpServer`
+
+Non-blocking TCP listening socket, bound to an `EventLoop`.
+
+| Method | Description |
+|--------|-------------|
+| `listen(port, backlog, reuse_port)` | Create, bind, and listen. `reuse_port` enables `SO_REUSEPORT`. |
+| `async_accept_fd()` | `co_await` a new client fd. |
+| `async_accept()` | `co_await` a new `TcpSocket`. |
+
+### `coro_epoll::TcpSocket`
+
+Non-blocking connected TCP socket. Move-only; destructor closes the fd and deregisters from the `EventLoop`.
+
+| Method | Description |
+|--------|-------------|
+| `async_read(buffer, size)` | `co_await` until data arrives. Returns bytes read, or `0` on EOF. |
+| `async_write(buffer, size)` | `co_await` until all bytes are written. Partial writes are handled transparently. |
+
+### `coro_epoll::UdpSocket`
+
+Non-blocking UDP socket.
+
+| Method | Description |
+|--------|-------------|
+| `bind(port, reuse_port)` | Create and bind. Supports `SO_REUSEPORT`. |
+| `async_recv_from(buffer, size)` | `co_await` a datagram. Returns `UdpReceiveResult{size, endpoint}`. |
+| `async_send_to(buffer, size, endpoint)` | `co_await` until the datagram is sent. |
+
+### `coro_epoll::UdpEndpoint`
+
+Immutable IPv4 address + port. Construct from `(string_view address, uint16_t port)`, or from a raw `sockaddr_in`.
 
 ## Threading model
 
 ```text
 worker thread N
-    worker EventLoop N
+    EventLoop N
         epoll_wait(eventfd + listen fd + client fds)
             accept()  ← SO_REUSEPORT, kernel distributes connections
                 spawn client coroutine
             resume read/write coroutines
 
 business thread pool
-    run CPU-heavy/blocking tasks
-    post coroutine continuation back to the original worker EventLoop
+    run CPU-heavy / blocking tasks
+    post continuation back to the originating EventLoop via loop.post()
 ```
 
-Each worker `EventLoop` owns its own `epoll` fd and a listening socket bound with `SO_REUSEPORT`. The kernel distributes incoming connections across all worker threads. A client socket stays on whichever worker accepted it, and all subsequent read/write events for that socket are handled by the same worker.
-
-The client coroutine can offload expensive logic without blocking the network worker:
-
-```cpp
-std::string output = co_await business_pool.submit(loop, [input = std::move(input)]() mutable {
-    return process_payload(std::move(input));
-});
-```
-
-The submitted function runs on the business pool. When it completes, the coroutine is resumed through `loop.post(...)`, so subsequent socket writes still happen on the socket's owning network worker.
+Each `EventLoop` owns its `epoll`/`kqueue` fd and runs on a dedicated thread. A client socket stays on whichever worker accepted it — all subsequent I/O for that socket is handled by the same worker, so no locking is needed for socket state.
 
 ## Build
-
-Run on Linux or macOS:
 
 ```bash
 cmake -S . -B build
