@@ -174,7 +174,7 @@ public:
         close();
     }
 
-    void listen(std::uint16_t port, int backlog = SOMAXCONN) {
+    void listen(std::uint16_t port, int backlog = SOMAXCONN, bool reuse_port = false) {
         close();
 
 #if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
@@ -203,6 +203,17 @@ public:
         if (::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
             throw std::system_error(errno, std::generic_category(), "setsockopt SO_REUSEADDR");
         }
+#ifdef SO_REUSEPORT
+        if (reuse_port) {
+            if (::setsockopt(fd_, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0) {
+                throw std::system_error(errno, std::generic_category(), "setsockopt SO_REUSEPORT");
+            }
+        }
+#else
+        if (reuse_port) {
+            throw std::runtime_error("SO_REUSEPORT is not supported on this platform");
+        }
+#endif
 
         sockaddr_in address{};
         address.sin_family = AF_INET;

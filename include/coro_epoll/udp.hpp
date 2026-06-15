@@ -139,7 +139,9 @@ public:
                 }
             }
 #else
+        if (reuse_port) {
             throw std::runtime_error("SO_REUSEPORT is not supported on this platform");
+        }
 #endif
 
             sockaddr_in address{};

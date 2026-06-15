@@ -8,11 +8,13 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 using coro_epoll::EventLoop;
 using coro_epoll::Task;
@@ -47,19 +49,15 @@ Task<void> handle_client(EventLoop& loop, TcpSocket socket, ThreadPool& business
     }
 }
 
-Task<void> accept_loop(EventLoop& accept_loop, TcpServer& server, WorkerGroup& workers, ThreadPool& business_pool) {
+Task<void> accept_and_handle(EventLoop& loop, TcpServer& server, ThreadPool& business_pool) {
     try {
         while (true) {
             const int client_fd = co_await server.async_accept_fd();
-            EventLoop& worker = workers.next();
-            worker.post([client_fd, &worker, &business_pool] {
-                worker.spawn(handle_client(worker, TcpSocket(worker, client_fd), business_pool));
-            });
+            loop.spawn(handle_client(loop, TcpSocket(loop, client_fd), business_pool));
         }
     } catch (const std::exception& error) {
         std::cerr << "accept loop error: " << error.what() << '\n';
-        workers.stop();
-        accept_loop.stop();
+        loop.stop();
     }
 }
 
@@ -113,18 +111,28 @@ int main(int argc, char** argv) {
         const std::size_t worker_count = parse_worker_count(argc, argv);
         const std::size_t business_worker_count = parse_business_worker_count(argc, argv, worker_count);
 
-        EventLoop accept_event_loop;
         WorkerGroup workers{worker_count};
         ThreadPool business_pool{business_worker_count};
-        TcpServer server(accept_event_loop);
-        server.listen(port);
+        std::vector<std::unique_ptr<TcpServer>> servers;
+        servers.reserve(worker_count);
+
+        for (std::size_t i = 0; i < worker_count; ++i) {
+            EventLoop& worker = workers.next();
+            auto server = std::make_unique<TcpServer>(worker);
+            server->listen(port, SOMAXCONN, true);
+            TcpServer* server_ptr = server.get();
+            servers.push_back(std::move(server));
+
+            worker.post([&worker, server_ptr, &business_pool] {
+                worker.spawn(accept_and_handle(worker, *server_ptr, business_pool));
+            });
+        }
 
         std::cout << "echo server listening on 0.0.0.0:" << port
-                  << " with " << worker_count << " network worker loop(s) and "
+                  << " with " << worker_count << " SO_REUSEPORT worker socket(s) and "
                   << business_worker_count << " business worker thread(s)\n";
 
-        accept_event_loop.spawn(accept_loop(accept_event_loop, server, workers, business_pool));
-        accept_event_loop.run();
+        workers.join();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "fatal: " << error.what() << '\n';
