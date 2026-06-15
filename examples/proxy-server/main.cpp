@@ -20,6 +20,7 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 using coro_epoll::EventLoop;
 using coro_epoll::Task;
@@ -132,23 +133,18 @@ Task<void> handle_session(EventLoop& loop, TcpSocket client, std::string backend
 }
 
 // ---------------------------------------------------------------------------
-// Accept loop
+// Accept loop — runs on each worker EventLoop
 // ---------------------------------------------------------------------------
-Task<void> accept_loop(EventLoop& accept_loop, TcpServer& server, WorkerGroup& workers,
-                       std::string backend_host, std::uint16_t backend_port) {
+Task<void> accept_and_handle(EventLoop& loop, TcpServer& server,
+                             std::string backend_host, std::uint16_t backend_port) {
     try {
         while (true) {
             const int client_fd = co_await server.async_accept_fd();
-            EventLoop& worker = workers.next();
-            std::string host = backend_host;
-            worker.post([client_fd, &worker, host = std::move(host), backend_port] {
-                worker.spawn(handle_session(worker, TcpSocket(worker, client_fd), std::move(host), backend_port));
-            });
+            loop.spawn(handle_session(loop, TcpSocket(loop, client_fd), backend_host, backend_port));
         }
     } catch (const std::exception& error) {
         std::cerr << "accept loop error: " << error.what() << '\n';
-        workers.stop();
-        accept_loop.stop();
+        loop.stop();
     }
 }
 
@@ -220,17 +216,27 @@ int main(int argc, char** argv) {
         const std::uint16_t backend_port = parse_backend_port(argc, argv);
         const std::size_t worker_count = parse_worker_count(argc, argv);
 
-        EventLoop accept_event_loop;
         WorkerGroup workers{worker_count};
-        TcpServer server(accept_event_loop);
-        server.listen(listen_port);
+        std::vector<std::unique_ptr<TcpServer>> servers;
+        servers.reserve(worker_count);
+
+        for (std::size_t i = 0; i < worker_count; ++i) {
+            EventLoop& worker = workers.next();
+            auto server = std::make_unique<TcpServer>(worker);
+            server->listen(listen_port, SOMAXCONN, true);
+            TcpServer* server_ptr = server.get();
+            servers.push_back(std::move(server));
+
+            worker.post([&worker, server_ptr, &backend_host, backend_port] {
+                worker.spawn(accept_and_handle(worker, *server_ptr, backend_host, backend_port));
+            });
+        }
 
         std::cout << "tcp proxy listening on 0.0.0.0:" << listen_port
                   << " → " << backend_host << ":" << backend_port
-                  << " with " << worker_count << " worker(s)\n";
+                  << " with " << worker_count << " SO_REUSEPORT worker socket(s)\n";
 
-        accept_event_loop.spawn(accept_loop(accept_event_loop, server, workers, backend_host, backend_port));
-        accept_event_loop.run();
+        workers.join();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "fatal: " << error.what() << '\n';
