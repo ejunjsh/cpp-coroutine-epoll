@@ -1,6 +1,6 @@
 # http_server
 
-Minimal HTTP/1.1 server with keep-alive support:
+Minimal HTTP/1.1 server with keep-alive support, using `SO_REUSEPORT` across worker event loops:
 
 ```bash
 ./build/http_server [port=8080] [worker_count]

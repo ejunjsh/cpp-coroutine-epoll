@@ -1,6 +1,6 @@
 # proxy_server
 
-TCP proxy that forwards connections to a backend:
+TCP proxy using `SO_REUSEPORT` across worker event loops, forwarding connections to a backend:
 
 ```bash
 ./build/proxy_server <listen_port> <backend_host> <backend_port> [worker_count]
