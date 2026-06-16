@@ -99,7 +99,7 @@ Task<HttpRequest> parse_request(TcpSocket& socket) {
     // Request line: METHOD SP PATH SP VERSION
     const std::string request_line = co_await read_line(socket);
     if (request_line.empty()) {
-        throw std::runtime_error("empty request line");
+        co_return request; // EOF — client closed connection, return empty request
     }
 
     {
@@ -218,6 +218,9 @@ Task<void> handle_client(EventLoop& /*loop*/, TcpSocket socket) {
         while (true) {
             // Parse the HTTP request
             HttpRequest request = co_await parse_request(socket);
+            if (request.method.empty()) {
+                break; // EOF — client closed connection
+            }
             std::cout << "  " << request.method << ' ' << request.path << '\n';
 
             // Build and send the response
