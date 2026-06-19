@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace coro_epoll {
 
@@ -121,6 +122,32 @@ public:
             }
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 co_await loop_->readable(fd_);
+                continue;
+            }
+            throw std::system_error(errno, std::generic_category(), "recv");
+        }
+    }
+
+    Task<std::size_t> async_read_et(char* buffer, std::size_t size) {
+        ensure_valid();
+        std::size_t total = 0;
+        while (true) {
+            const ssize_t count = ::recv(fd_, buffer + total, size - total, 0);
+            if (count > 0) {
+                total += static_cast<std::size_t>(count);
+                continue; // ET: drain socket buffer until EAGAIN
+            }
+            if (count == 0) {
+                co_return total; // EOF — return whatever was read
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (total > 0) {
+                    co_return total; // drained available data
+                }
+                co_await loop_->readable_et(fd_);
                 continue;
             }
             throw std::system_error(errno, std::generic_category(), "recv");
@@ -275,6 +302,55 @@ public:
     Task<TcpSocket> async_accept() {
         const int client_fd = co_await async_accept_fd();
         co_return TcpSocket(*loop_, client_fd);
+    }
+
+    Task<std::vector<TcpSocket>> async_accept_et() {
+        ensure_valid();
+        std::vector<TcpSocket> sockets;
+        co_await loop_->readable_et(fd_);
+
+        // ET: drain the accept queue until EAGAIN
+        while (true) {
+            sockaddr_in client_address{};
+            socklen_t client_length = sizeof(client_address);
+#if defined(__linux__) && defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+            const int client_fd = ::accept4(
+                fd_,
+                reinterpret_cast<sockaddr*>(&client_address),
+                &client_length,
+                SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+            const int client_fd = ::accept(
+                fd_, reinterpret_cast<sockaddr*>(&client_address), &client_length);
+#endif
+
+            if (client_fd >= 0) {
+                try {
+                    disable_sigpipe(client_fd);
+#if !(defined(__linux__) && defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC))
+                    set_non_blocking(client_fd);
+                    set_close_on_exec(client_fd);
+#endif
+                } catch (...) {
+                    ::close(client_fd);
+                    throw;
+                }
+                sockets.emplace_back(*loop_, client_fd);
+                continue;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break; // drained
+            }
+#if defined(__linux__) && defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+            throw std::system_error(errno, std::generic_category(), "accept4");
+#else
+            throw std::system_error(errno, std::generic_category(), "accept");
+#endif
+        }
+        co_return sockets;
     }
 
     void close() noexcept {

@@ -25,8 +25,10 @@ Single-threaded reactor. Owns one `epoll` (Linux) or `kqueue` (macOS) fd.
 | `post(std::function<void()>)` | Enqueue a callback from another thread. Thread-safe. |
 | `run()` | Blocking event loop. Returns when `stop()` is called. |
 | `stop()` | Signal the loop to exit. Thread-safe. |
-| `readable(int fd)` | Returns an awaiter that suspends until `fd` is readable. |
-| `writable(int fd)` | Returns an awaiter that suspends until `fd` is writable. |
+| `readable(int fd)` | Returns an awaiter that suspends until `fd` is readable (level-triggered). |
+| `writable(int fd)` | Returns an awaiter that suspends until `fd` is writable (level-triggered). |
+| `readable_et(int fd)` | Edge-triggered variant of `readable`. Fires only on state change. |
+| `writable_et(int fd)` | Edge-triggered variant of `writable`. Fires only on state change. |
 | `remove(int fd)` | Deregister `fd` and clean up associated coroutine handles. |
 
 `post()` enables cross-thread scheduling: a business thread can post a continuation back to the owning `EventLoop`, keeping socket I/O on the correct thread.
@@ -60,8 +62,9 @@ Non-blocking TCP listening socket, bound to an `EventLoop`.
 | Method | Description |
 |--------|-------------|
 | `listen(port, backlog, reuse_port)` | Create, bind, and listen. `reuse_port` enables `SO_REUSEPORT`. |
-| `async_accept_fd()` | `co_await` a new client fd. |
-| `async_accept()` | `co_await` a new `TcpSocket`. |
+| `async_accept_fd()` | `co_await` a new client fd (level-triggered). |
+| `async_accept()` | `co_await` a new `TcpSocket` (level-triggered). |
+| `async_accept_et()` | Edge-triggered variant — drains accept queue on each event, returns `std::vector<TcpSocket>`. |
 
 ### `coro_epoll::TcpSocket`
 
@@ -69,8 +72,9 @@ Non-blocking connected TCP socket. Move-only; destructor closes the fd and dereg
 
 | Method | Description |
 |--------|-------------|
-| `async_read(buffer, size)` | `co_await` until data arrives. Returns bytes read, or `0` on EOF. |
+| `async_read(buffer, size)` | `co_await` until data arrives (level-triggered). Returns bytes read, or `0` on EOF. |
 | `async_write(buffer, size)` | `co_await` until all bytes are written. Partial writes are handled transparently. |
+| `async_read_et(buffer, size)` | Edge-triggered variant — drains socket buffer until `EAGAIN` on each event. |
 
 ### `coro_epoll::UdpSocket`
 

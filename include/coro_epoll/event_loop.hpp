@@ -167,6 +167,7 @@ public:
     struct ReadinessAwaiter {
         EventLoop& loop;
         int fd;
+        bool edge_trigger;
 
 #if defined(__linux__)
         std::uint32_t event;
@@ -179,7 +180,11 @@ public:
         }
 
         void await_suspend(std::coroutine_handle<> handle) {
-            loop.add_interest(fd, event, handle);
+            if (edge_trigger) {
+                loop.add_interest_et(fd, event, handle);
+            } else {
+                loop.add_interest(fd, event, handle);
+            }
         }
 
         void await_resume() const noexcept {}
@@ -187,17 +192,33 @@ public:
 
     ReadinessAwaiter readable(int fd) noexcept {
 #if defined(__linux__)
-        return ReadinessAwaiter{*this, fd, EPOLLIN};
+        return ReadinessAwaiter{*this, fd, false, EPOLLIN};
 #elif defined(__APPLE__)
-        return ReadinessAwaiter{*this, fd, EVFILT_READ};
+        return ReadinessAwaiter{*this, fd, false, EVFILT_READ};
 #endif
     }
 
     ReadinessAwaiter writable(int fd) noexcept {
 #if defined(__linux__)
-        return ReadinessAwaiter{*this, fd, EPOLLOUT};
+        return ReadinessAwaiter{*this, fd, false, EPOLLOUT};
 #elif defined(__APPLE__)
-        return ReadinessAwaiter{*this, fd, EVFILT_WRITE};
+        return ReadinessAwaiter{*this, fd, false, EVFILT_WRITE};
+#endif
+    }
+
+    ReadinessAwaiter readable_et(int fd) noexcept {
+#if defined(__linux__)
+        return ReadinessAwaiter{*this, fd, true, EPOLLIN};
+#elif defined(__APPLE__)
+        return ReadinessAwaiter{*this, fd, true, EVFILT_READ};
+#endif
+    }
+
+    ReadinessAwaiter writable_et(int fd) noexcept {
+#if defined(__linux__)
+        return ReadinessAwaiter{*this, fd, true, EPOLLOUT};
+#elif defined(__APPLE__)
+        return ReadinessAwaiter{*this, fd, true, EVFILT_WRITE};
 #endif
     }
 
@@ -218,6 +239,7 @@ private:
     struct FdState {
         std::coroutine_handle<> read_handle;
         std::coroutine_handle<> write_handle;
+        bool edge_trigger = false;
     };
 
 #if defined(__APPLE__)
@@ -329,6 +351,23 @@ private:
 #elif defined(__APPLE__)
     void add_interest(int fd, int16_t event, std::coroutine_handle<> handle) {
 #endif
+        add_interest_impl(fd, event, handle, false);
+    }
+
+#if defined(__linux__)
+    void add_interest_et(int fd, std::uint32_t event, std::coroutine_handle<> handle) {
+#elif defined(__APPLE__)
+    void add_interest_et(int fd, int16_t event, std::coroutine_handle<> handle) {
+#endif
+        add_interest_impl(fd, event, handle, true);
+    }
+
+private:
+#if defined(__linux__)
+    void add_interest_impl(int fd, std::uint32_t event, std::coroutine_handle<> handle, bool et) {
+#elif defined(__APPLE__)
+    void add_interest_impl(int fd, int16_t event, std::coroutine_handle<> handle, bool et) {
+#endif
         if (fd < 0) {
             throw std::invalid_argument("cannot wait on an invalid file descriptor");
         }
@@ -346,7 +385,7 @@ private:
         }
 
         epoll_event ep_event{};
-        ep_event.events = EPOLLIN | EPOLLOUT;
+        ep_event.events = EPOLLIN | EPOLLOUT | (et ? EPOLLET : 0U);
         ep_event.data.fd = fd;
 
         const int operation = inserted ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
@@ -366,7 +405,7 @@ private:
         }
 
         try {
-            update_or_remove(fd, state);
+            update_or_remove_impl(fd, state, et);
         } catch (...) {
             if (inserted) {
                 states_.erase(fd);
@@ -374,7 +413,9 @@ private:
             throw;
         }
 #endif
+        state.edge_trigger = et;
     }
+public:
 
 #if defined(__linux__)
     void dispatch(const epoll_event& event) {
@@ -452,6 +493,10 @@ private:
 #endif
 
     void update_or_remove(int fd, const FdState& state) {
+        update_or_remove_impl(fd, state, state.edge_trigger);
+    }
+
+    void update_or_remove_impl(int fd, const FdState& state, bool et) {
 #if defined(__linux__)
         const std::uint32_t events = active_events(state);
         if (events == 0) {
@@ -461,7 +506,7 @@ private:
         }
 
         epoll_event ep_event{};
-        ep_event.events = events;
+        ep_event.events = events | (et ? EPOLLET : 0U);
         ep_event.data.fd = fd;
         if (::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ep_event) < 0 && errno != EBADF && errno != ENOENT) {
             throw std::system_error(errno, std::generic_category(), "epoll_ctl mod");
@@ -474,8 +519,8 @@ private:
             return;
         }
 
-        update_kqueue_filter(fd, EVFILT_READ, static_cast<bool>(state.read_handle));
-        update_kqueue_filter(fd, EVFILT_WRITE, static_cast<bool>(state.write_handle));
+        update_kqueue_filter_impl(fd, EVFILT_READ, static_cast<bool>(state.read_handle), et);
+        update_kqueue_filter_impl(fd, EVFILT_WRITE, static_cast<bool>(state.write_handle), et);
 #endif
     }
 
@@ -491,13 +536,13 @@ private:
         return events == EPOLLRDHUP ? 0 : events;
     }
 #elif defined(__APPLE__)
-    void update_kqueue_filter(int fd, int16_t filter, bool active) {
+    void update_kqueue_filter_impl(int fd, int16_t filter, bool active, bool et) {
         struct kevent event{};
         EV_SET(
             &event,
             static_cast<uintptr_t>(fd),
             filter,
-            static_cast<uint16_t>(active ? (EV_ADD | EV_ENABLE) : EV_DELETE),
+            static_cast<uint16_t>(active ? (EV_ADD | EV_ENABLE | (et ? EV_CLEAR : 0)) : EV_DELETE),
             0,
             0,
             nullptr);
