@@ -3,11 +3,11 @@
 TCP echo server using `SO_REUSEPORT` across worker event loops:
 
 ```bash
-./build/echo_server [port=8888] [worker_count] [business_worker_count]
+./build/tcp_echo_server [port=8888] [worker_count] [business_worker_count]
 ```
 
 ```bash
-./build/echo_server 8888
+./build/tcp_echo_server 8888
 nc 127.0.0.1 8888
 ```
 

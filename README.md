@@ -83,7 +83,8 @@ Non-blocking UDP socket.
 | Method | Description |
 |--------|-------------|
 | `bind(port, reuse_port)` | Create and bind. Supports `SO_REUSEPORT`. |
-| `async_recv_from(buffer, size)` | `co_await` a datagram. Returns `UdpReceiveResult{size, endpoint}`. |
+| `async_recv_from(buffer, size)` | `co_await` a datagram (level-triggered). Returns `UdpReceiveResult{size, endpoint}`. |
+| `async_recv_from_et(buffer, size)` | Edge-triggered variant — drains socket buffer, returns `std::vector<UdpReceiveResult>`. |
 | `async_send_to(buffer, size, endpoint)` | `co_await` until the datagram is sent. |
 
 ### `coro_epoll::UdpEndpoint`
@@ -116,7 +117,9 @@ cmake --build build
 
 ## Examples
 
-- [echo_server](examples/echo-server/README.md) — TCP echo server
-- [udp_echo_server](examples/udp-echo-server/README.md) — UDP echo server
+- [tcp_echo_server](examples/tcp-echo-server/README.md) — TCP echo server (level-triggered)
+- [tcp_echo_server_et](examples/tcp-echo-server-et/README.md) — TCP echo server (edge-triggered)
+- [udp_echo_server](examples/udp-echo-server/README.md) — UDP echo server (level-triggered)
+- [udp_echo_server_et](examples/udp-echo-server-et/README.md) — UDP echo server (edge-triggered)
 - [proxy_server](examples/proxy-server/README.md) — TCP proxy
 - [http_server](examples/http-server/README.md) — Minimal HTTP/1.1 server

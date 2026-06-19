@@ -13,10 +13,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
 
 set(EXAMPLES
-    echo_server:examples/echo-server/main.cpp
+    tcp_echo_server:examples/tcp-echo-server/main.cpp
     proxy_server:examples/proxy-server/main.cpp
     http_server:examples/http-server/main.cpp
     udp_echo_server:examples/udp-echo-server/main.cpp
+    tcp_echo_server_et:examples/tcp-echo-server-et/main.cpp
+    udp_echo_server_et:examples/udp-echo-server-et/main.cpp
 )
 
 foreach(example IN LISTS EXAMPLES)
