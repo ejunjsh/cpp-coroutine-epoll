@@ -18,6 +18,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace coro_epoll {
 
@@ -179,6 +180,37 @@ public:
             }
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 co_await loop_->readable(fd_);
+                continue;
+            }
+            throw std::system_error(errno, std::generic_category(), "recvfrom");
+        }
+    }
+
+    Task<std::vector<UdpReceiveResult>> async_recv_from_et(char* buffer, std::size_t size) {
+        ensure_valid();
+        std::vector<UdpReceiveResult> results;
+        while (true) {
+            UdpEndpoint endpoint;
+            const ssize_t count = ::recvfrom(
+                fd_,
+                buffer,
+                size,
+                0,
+                endpoint.sockaddr_ptr(),
+                endpoint.sockaddr_length_ptr());
+
+            if (count >= 0) {
+                results.push_back(UdpReceiveResult{static_cast<std::size_t>(count), endpoint});
+                continue;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (!results.empty()) {
+                    co_return results; // drained all available datagrams
+                }
+                co_await loop_->readable_et(fd_);
                 continue;
             }
             throw std::system_error(errno, std::generic_category(), "recvfrom");
