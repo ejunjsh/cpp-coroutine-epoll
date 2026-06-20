@@ -81,6 +81,13 @@ public:
         return !handle_ || handle_.done();
     }
 
+    std::exception_ptr exception() const noexcept {
+        if (handle_ && handle_.done()) {
+            return handle_.promise().exception;
+        }
+        return nullptr;
+    }
+
     void resume() {
         if (handle_ && !handle_.done()) {
             handle_.resume();
@@ -186,6 +193,13 @@ public:
 
     bool done() const noexcept {
         return !handle_ || handle_.done();
+    }
+
+    std::exception_ptr exception() const noexcept {
+        if (handle_ && handle_.done()) {
+            return handle_.promise().exception;
+        }
+        return nullptr;
     }
 
     void resume() {

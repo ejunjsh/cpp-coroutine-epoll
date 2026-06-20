@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <iostream>
 #include <mutex>
 #include <queue>
 #include <stdexcept>
@@ -130,8 +131,12 @@ public:
         std::vector<struct kevent> events(128);
 #endif
         while (!stopped_) {
-            drain_pending_tasks();
-            compact_finished_tasks();
+            try {
+                drain_pending_tasks();
+                compact_finished_tasks();
+            } catch (const std::exception& error) {
+                std::cerr << "event loop task error: " << error.what() << '\n';
+            }
 
 #if defined(__linux__)
             const int count = ::epoll_wait(epoll_fd_, events.data(), static_cast<int>(events.size()), -1);
@@ -154,8 +159,6 @@ public:
             for (int i = 0; i < count; ++i) {
                 dispatch(events[static_cast<std::size_t>(i)]);
             }
-            drain_pending_tasks();
-            compact_finished_tasks();
         }
     }
 
@@ -341,6 +344,18 @@ private:
     }
 
     void compact_finished_tasks() {
+        for (auto& task : tasks_) {
+            if (task.done()) {
+                const auto ex = task.exception();
+                if (ex) {
+                    try {
+                        std::rethrow_exception(ex);
+                    } catch (const std::exception& error) {
+                        std::cerr << "unhandled coroutine exception: " << error.what() << '\n';
+                    }
+                }
+            }
+        }
         tasks_.erase(
             std::remove_if(tasks_.begin(), tasks_.end(), [](const Task<void>& task) { return task.done(); }),
             tasks_.end());
