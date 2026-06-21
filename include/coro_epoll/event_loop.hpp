@@ -157,7 +157,13 @@ public:
 #endif
 
             for (int i = 0; i < count; ++i) {
-                dispatch(events[static_cast<std::size_t>(i)]);
+                try {
+                    dispatch(events[static_cast<std::size_t>(i)]);
+                } catch (const std::exception& error) {
+                    std::cerr << "event loop dispatch error: " << error.what() << '\n';
+                } catch (...) {
+                    std::cerr << "event loop dispatch unknown error\n";
+                }
             }
         }
     }
